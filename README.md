@@ -21,7 +21,7 @@ Las dos APIs simuladas viven en `Demo.Backend` para ejecutar el ejemplo con solo
 
 ## Ejecutar
 
-Requisito: SDK de .NET 10. Las aplicaciones no requieren base de datos ni paquetes NuGet adicionales. El proyecto de pruebas usa MSTest.Sdk, Moq y Microsoft.AspNetCore.Mvc.Testing; `NuGet.Config` configura nuget.org para restaurarlos. La primera restauración requiere conexión si esos paquetes no están en la caché local.
+Requisito: SDK de .NET 10. Las aplicaciones no requieren base de datos ni paquetes NuGet adicionales. Los proyectos de pruebas usan MSTest.Sdk, Moq y Microsoft.AspNetCore.Mvc.Testing; la suite de aserciones fluidas añade FluentAssertions 7.2.0. `NuGet.Config` configura nuget.org para restaurar estos paquetes. La primera restauración requiere conexión si no están en la caché local.
 
 Desde la carpeta raíz, compila:
 
@@ -79,7 +79,7 @@ src/
     └── Program.cs
 ```
 
-Las pruebas están en `tests/Bff.Api.Tests`, agrupadas en `Services`, `Clients`, `Configuration`, `ExceptionHandlers`, `Integration` y `Mocks`.
+Las pruebas están en `tests/Bff.Api.Tests` y `tests/Bff.Api.FluentTests`, agrupadas en `Services`, `Clients`, `Configuration`, `ExceptionHandlers`, `Integration` y `Mocks`.
 
 La fachada adapta datos para la presentación; el catálogo conserva el precio y el inventario conserva las existencias. `CanBuy` indica disponibilidad visual en esta demo, no autoriza una compra ni reserva stock. `SupplierCost` es un dato interno simulado: llega desde catálogo, pero no se publica en el BFF.
 
@@ -144,12 +144,40 @@ Los errores usan `ProblemDetails`. Los detalles técnicos se registran en el ser
 
 ### Pruebas de Bff.Api
 
+Se conservan dos suites con los mismos 46 casos para comparar las aserciones:
+
+| Proyecto | Aserciones | Ejecutor |
+| --- | --- | --- |
+| `Bff.Api.Tests` | `Assert` y `StringAssert` de `Microsoft.VisualStudio.TestTools.UnitTesting`. | MSTest con Microsoft.Testing.Platform. |
+| `Bff.Api.FluentTests` | FluentAssertions: `Should().Be()`, `BeEquivalentTo()`, `ThrowAsync()` y `ThrowExactlyAsync()`. | MSTest con Microsoft.Testing.Platform. |
+
+Las pruebas originales con UnitTesting se mantienen intactas. FluentAssertions cambia la sintaxis de las aserciones; MSTest sigue descubriendo y ejecutando las pruebas de ambas suites. Las dos mantienen `[TestMethod]`, los bloques Arrange/Act/Assert y los mocks estrictos.
+
 ```powershell
 dotnet restore BffExample.slnx --configfile NuGet.Config
 dotnet test --project tests/Bff.Api.Tests/Bff.Api.Tests.csproj --no-restore
+dotnet test --project tests/Bff.Api.FluentTests/Bff.Api.FluentTests.csproj --no-restore
 ```
 
-El proyecto usa **MSTest.Sdk con Microsoft.Testing.Platform**. `global.json` selecciona ese runner para `dotnet test` en .NET 10. Todas las pruebas llevan `[TestMethod]` y los bloques `// Arrange`, `// Act`, `// Assert`. `[DataRow]` permite ejecutar varios casos con el mismo método.
+Para ejecutar las dos suites en una llamada:
+
+```powershell
+dotnet test --solution BffExample.slnx --no-restore
+```
+
+Por ejemplo, una aserción con UnitTesting:
+
+```csharp
+Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+```
+
+En la suite con FluentAssertions:
+
+```csharp
+response.StatusCode.Should().Be(HttpStatusCode.OK);
+```
+
+Los dos proyectos usan **MSTest.Sdk con Microsoft.Testing.Platform**. `global.json` selecciona ese runner para `dotnet test` en .NET 10. Todas las pruebas llevan `[TestMethod]` y los bloques `// Arrange`, `// Act`, `// Assert`. `[DataRow]` permite ejecutar varios casos con el mismo método.
 
 | Carpeta | Comportamientos comprobados |
 | --- | --- |
