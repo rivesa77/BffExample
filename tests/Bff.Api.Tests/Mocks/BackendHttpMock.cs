@@ -32,4 +32,10 @@ public static class BackendHttpMock
             ItExpr.Is<HttpRequestMessage>(request =>
                 request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == path),
             ItExpr.IsAny<CancellationToken>());
+
+    public static void VerifyPost(Mock<HttpMessageHandler> handler, string path) =>
+        handler.Protected().Verify("SendAsync", Times.Once(),
+            ItExpr.Is<HttpRequestMessage>(request =>
+                request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == path),
+            ItExpr.IsAny<CancellationToken>());
 }

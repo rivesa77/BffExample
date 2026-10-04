@@ -2,6 +2,8 @@
 
 Un **Backend for Frontend (BFF)** prepara una API para las necesidades de una interfaz concreta. En este ejemplo, la página web hace una sola petición para obtener nombre, precio y disponibilidad. El BFF consulta catálogo e inventario por HTTP y transforma las respuestas al modelo de la pantalla.
 
+También incluye un alta de productos mediante `POST /bff/products`, con FluentValidation para los datos de entrada y un contrato de respuesta específico.
+
 ## Arquitectura
 
 ```mermaid
@@ -50,10 +52,12 @@ Abre [la página de productos](http://localhost:5100). El backend escucha en `ht
 | --- | --- | --- |
 | BFF | `Bff.Api` | Ofrece un contrato específico para esta pantalla web. |
 | Facade | `Services/ProductPageService.cs` | Oculta la coordinación entre catálogo e inventario detrás de `GetAsync`. |
+| Facade | `Services/ProductCreationService.cs` | Valida la solicitud de alta, delega en catálogo y prepara la respuesta pública. |
 | Adapter | `Clients/CatalogClient.cs`, `Clients/InventoryClient.cs` | Convierte las APIs HTTP externas en interfaces C# para la fachada. |
 | Agregación | `Services/ProductPageService.cs` | Ejecuta dos consultas en paralelo y compone una sola respuesta. |
 | Inyección de dependencias | `Program.cs` | Conecta interfaces y clientes tipados gestionados por `IHttpClientFactory`. |
 | DTO | `Models/ProductPageDto.cs` | Separa el contrato de la pantalla de los modelos internos de los backends. |
+| Request / DTO | `Requests/CreateProductRequest.cs`, `Models/CreatedProductDto.cs` | Separa los datos de entrada del resultado del alta. |
 
 Para seguir el código, empieza por `ProductEndpoints`, continúa con `ProductPageService` y revisa los dos clientes HTTP. Las interfaces permiten sustituir los clientes por dobles en pruebas.
 
@@ -70,6 +74,7 @@ src/
 │   ├── ExceptionHandlers/ # Tratamiento de errores
 │   ├── Interfaces/        # Contratos de clientes y servicios
 │   ├── Models/            # Records y DTO
+│   ├── Requests/          # Datos de entrada
 │   ├── Services/          # Fachada y agregación
 │   ├── Validators/        # Reglas de FluentValidation
 │   ├── wwwroot/           # Página web
@@ -77,6 +82,7 @@ src/
 └── Demo.Backend/
     ├── Endpoints/         # APIs simuladas
     ├── Models/            # Records del backend
+    ├── Requests/          # Contratos de entrada del backend
     └── Program.cs
 ```
 
@@ -102,7 +108,72 @@ await validator.ValidateAndThrowAsync(id, cancellationToken);
 
 Un identificador cero o negativo lanza `ValidationException` sin consultar las dependencias. `BackendExceptionHandler` la convierte en **HTTP 400** con el título `El id debe ser mayor que cero.`. El endpoint delega esta comprobación en el servicio, por lo que la misma regla protege las llamadas HTTP y las invocaciones directas desde código.
 
-FluentValidation se aplica únicamente a estos parámetros de entrada. `CatalogProduct`, `InventoryStock` y `ProductPageDto` son resultados y no tienen validadores. Se mantienen el tratamiento de errores HTTP, la deserialización JSON y los casos de respuesta nula o inventario ausente.
+FluentValidation se aplica únicamente a los parámetros y solicitudes de entrada. `CatalogProduct`, `InventoryStock`, `ProductPageDto` y `CreatedProductDto` son resultados y no tienen validadores. Se mantienen el tratamiento de errores HTTP, la deserialización JSON y los casos de respuesta nula o inventario ausente.
+
+## Dar de alta un producto
+
+El recorrido del alta es `POST /bff/products` → `ProductCreationService` → `CatalogClient` → `POST /catalog/products` de `Demo.Backend`.
+
+`CreateProductRequestValidator` se registra como `IValidator<CreateProductRequest>` y se ejecuta en `ProductCreationService.CreateAsync` y `CatalogClient.CreateProductAsync`, antes de llamar a sus dependencias. Así, la misma validación protege la API y las llamadas directas desde código.
+
+| Campo | Validación de entrada |
+| --- | --- |
+| `Name` | Obligatorio; no nulo, vacío ni compuesto solo por espacios; máximo 100 caracteres. |
+| `Description` | Obligatoria; no nula, vacía ni compuesta solo por espacios; máximo 1000 caracteres. |
+| `Price` | Obligatorio y mayor o igual que cero. El valor cero permite productos gratuitos. |
+| `Currency` | Obligatoria; exactamente tres letras ASCII mayúsculas, por ejemplo `EUR` o `USD`. Se comprueba el formato, no un catálogo de códigos ISO. |
+| `InitialStock` | Mayor o igual que cero. Es opcional y vale cero por defecto. |
+
+`Price` es nullable en la solicitud para distinguir un precio omitido de un precio cero. `PreValidate` permite que una solicitud nula, recibida desde código, produzca un error de validación. Los cuerpos HTTP nulos o con JSON ilegible se rechazan durante el binding con HTTP 400.
+
+Con los dos procesos iniciados, ejecuta:
+
+```powershell
+$body = @{
+    name = "Raton"
+    description = "Raton inalambrico."
+    price = 35.95
+    currency = "EUR"
+    initialStock = 7
+} | ConvertTo-Json
+
+$created = Invoke-RestMethod -Method Post `
+    -Uri http://localhost:5100/bff/products `
+    -ContentType "application/json" -Body $body
+
+Invoke-RestMethod "http://localhost:5100/bff/products/$($created.id)"
+```
+
+El POST devuelve **HTTP 201 Created**, la cabecera `Location: /bff/products/3` y este cuerpo si es la primera alta desde el arranque:
+
+```json
+{
+  "id": 3,
+  "name": "Raton",
+  "description": "Raton inalambrico.",
+  "price": 35.95,
+  "currency": "EUR"
+}
+```
+
+`Demo.Backend` asigna el identificador y registra las existencias iniciales en memoria antes de publicar el producto en el catálogo. La posterior consulta GET utiliza la agregación existente y muestra el producto disponible. Si `InitialStock` es cero, lo muestra agotado. Los datos se pierden al reiniciar el backend. El contador usa `Interlocked` y las colecciones son `ConcurrentDictionary` para admitir altas concurrentes en esta demo.
+
+El BFF envía una sola solicitud de alta al backend. El backend de ejemplo gestiona el catálogo y el inventario inicial dentro de su mismo proceso. `SupplierCost` conserva su carácter interno y no se incluye en `CreatedProductDto`.
+
+Una solicitud con `Name` vacío y `Price` negativo devuelve **HTTP 400** sin enviar HTTP al backend. El `ProblemDetails` incluye los errores por campo, por ejemplo:
+
+```json
+{
+  "status": 400,
+  "title": "Los datos de entrada no son válidos.",
+  "errors": {
+    "Name": ["El nombre es obligatorio."],
+    "Price": ["El precio no puede ser negativo."]
+  }
+}
+```
+
+La validación se limita a `CreateProductRequest`; los datos devueltos por catálogo se mapean a `CreatedProductDto` sin validación de salida.
 
 ## Por qué ProductPageService consulta en paralelo
 
@@ -154,10 +225,12 @@ Respuesta:
 | `/bff/products/2` | 200, agotado; `canBuy` es `false`. |
 | `/bff/products/999` | 404, producto inexistente. |
 | `/bff/products/0` | 400, identificador inválido. |
+| `POST /bff/products` con datos válidos | 201, producto creado y cabecera `Location`. |
+| `POST /bff/products` con datos de entrada inválidos | 400, errores por campo; sin llamadas al backend. |
 | Backend detenido o respuesta inválida | 502. |
 | Backend tarda más de 3 segundos | 504. |
 
-Los errores usan `ProblemDetails`. Los detalles técnicos se registran en el servidor. La cancelación de la petición se propaga a las llamadas HTTP. La respuesta requiere las dos fuentes: si alguna falla, no se devuelve una ficha parcial, incluso si la otra devuelve un 404.
+Los errores de validación usan `HttpValidationProblemDetails` y los fallos de dependencias usan `ProblemDetails`. Los detalles técnicos se registran en el servidor. La cancelación de la petición se propaga a las llamadas HTTP. La consulta de la ficha requiere las dos fuentes: si alguna falla, no se devuelve una ficha parcial, incluso si la otra devuelve un 404.
 
 `/health` confirma que cada proceso responde; no comprueba sus dependencias.
 
@@ -165,7 +238,7 @@ Los errores usan `ProblemDetails`. Los detalles técnicos se registran en el ser
 
 ### Pruebas de Bff.Api
 
-Se conservan dos suites con los mismos 65 casos para comparar las aserciones:
+Se conservan dos suites con los mismos 125 casos para comparar las aserciones:
 
 | Proyecto | Aserciones | Ejecutor |
 | --- | --- | --- |
@@ -219,16 +292,16 @@ Los dos proyectos usan **MSTest.Sdk con Microsoft.Testing.Platform**. `global.js
 
 | Carpeta | Comportamientos comprobados |
 | --- | --- |
-| `Services` | Validación del identificador de entrada sin consultar clientes cuando es inválido, agregación, precio para la pantalla, disponibilidad, producto inexistente, inventario ausente, errores, consultas en paralelo y propagación de cancelación. |
-| `Clients` | Validación del identificador de entrada sin enviar HTTP cuando es inválido, ruta HTTP, deserialización, 404, errores HTTP, JSON inválido, cuerpo JSON nulo y cancelación. |
-| `Validators` | Identificadores positivos, cero, negativos y los límites `int.MinValue` e `int.MaxValue`; propiedad y mensaje de error esperados. |
+| `Services` | Validación de entradas sin consultar clientes cuando son inválidas, alta y mapeo a DTO público, agregación, disponibilidad, producto inexistente, inventario ausente, errores, consultas en paralelo y propagación de cancelación. |
+| `Clients` | Validación de entradas sin enviar HTTP cuando son inválidas, GET y POST con JSON, deserialización, 404, errores HTTP, JSON inválido, cuerpo JSON nulo y cancelación. |
+| `Validators` | Identificadores positivos y límites de enteros; campos del alta nulos o vacíos, límites de longitud, precios omitidos o negativos, formato de moneda, existencias negativas y varios errores simultáneos. |
 | `Configuration` | URLs absolutas HTTP(S) y barra final obligatoria. |
 | `ExceptionHandlers` | No escribir una respuesta de error cuando el cliente cancela la petición. |
-| `Integration` | DTO público, exclusión de datos internos, 400 por entradas inválidas sin llamadas a backends, 404/502/504/500 con ProblemDetails, inventario ausente, health y página HTML. |
+| `Integration` | Alta con HTTP 201 y Location, DTO público, exclusión de datos internos, 400 por entradas inválidas sin llamadas a backends y errores por campo, 404/502/504/500 con ProblemDetails, inventario ausente, health y página HTML. |
 
 **Las llamadas a `Demo.Backend` se resuelven con mocks de Moq, siempre con `MockBehavior.Strict`.** La fachada se prueba con mocks de `ICatalogClient` e `IInventoryClient`. Los clientes HTTP y las pruebas de integración usan un mock de `HttpMessageHandler`, con setups para el envío y la liberación del handler. Las pruebas de integración levantan el BFF en memoria con `WebApplicationFactory` y ejecutan los clientes y la fachada reales, usando el transporte mockeado. No requieren iniciar el backend, abrir puertos ni usar una base de datos.
 
-El validador se prueba con instancias reales, sin mockear sus reglas. Cada caso declara el resultado esperado en Arrange y compara `IsValid`, la propiedad y el mensaje de error cuando corresponde. También se comprueba que los clientes y la fachada ejecuten la validación antes de llamar a las dependencias, que la API traduzca una entrada inválida a HTTP 400 y que los resultados se devuelvan sin validación de salida.
+Los validadores se prueban con instancias reales, sin mockear sus reglas. Cada caso declara el resultado esperado en Arrange y compara `IsValid`, la propiedad y el mensaje de error cuando corresponde. También se comprueba que los clientes y las fachadas ejecuten la validación antes de llamar a las dependencias, que la API traduzca una entrada inválida a HTTP 400 y que los resultados se devuelvan sin validación de salida.
 
 El timeout 504 se simula mediante una cancelación del transporte. Se comprueba su traducción a ProblemDetails sin esperar los tres segundos del timeout real. La página HTML se verifica como recurso estático; no se ejecuta JavaScript en un navegador.
 
@@ -238,7 +311,7 @@ El timeout 504 se simula mediante una cancelación del transporte. Se comprueba 
 powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-test.ps1
 ```
 
-El script compila, inicia procesos temporales en los puertos 5180 y 5181, comprueba la agregación, la exclusión de datos internos, los errores 400/404, la página HTML y el 502 al detener su backend. Finalmente detiene los procesos que ha creado. Los puertos se pueden cambiar con `-BffPort` y `-BackendPort`. La prueba no cubre el timeout 504 ni ejecuta JavaScript en un navegador.
+El script compila, inicia procesos temporales en los puertos 5180 y 5181 y comprueba la agregación, el alta con HTTP 201 y Location, la consulta del producto creado con su inventario inicial, un precio cero con existencias omitidas, la exclusión de datos internos, los errores 400/404, la página HTML y el 502 al detener su backend. Esta prueba de humo usa los dos procesos reales; las suites MSTest mantienen todas las llamadas al backend mockeadas. Finalmente detiene los procesos que ha creado. Los puertos se pueden cambiar con `-BffPort` y `-BackendPort`. La prueba no cubre el timeout 504 ni ejecuta JavaScript en un navegador.
 
 ## Configuración y alcance
 

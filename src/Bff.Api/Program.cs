@@ -5,6 +5,7 @@ using Bff.Api.Configuration;
 using Bff.Api.Endpoints;
 using Bff.Api.ExceptionHandlers;
 using Bff.Api.Interfaces;
+using Bff.Api.Requests;
 using Bff.Api.Services;
 using Bff.Api.Validators;
 using FluentValidation;
@@ -18,6 +19,7 @@ public sealed class Program
         builder.Services.AddProblemDetails();
         builder.Services.AddExceptionHandler<BackendExceptionHandler>();
         builder.Services.AddScoped<IValidator<int>, ProductIdValidator>();
+        builder.Services.AddScoped<IValidator<CreateProductRequest>, CreateProductRequestValidator>();
         builder.Services.AddOptions<BackendOptions>()
             .BindConfiguration("Backends")
             .Validate(options => BackendOptions.IsValidUrl(options.CatalogBaseUrl)
@@ -37,6 +39,7 @@ public sealed class Program
             client.Timeout = TimeSpan.FromSeconds(3);
         });
         builder.Services.AddScoped<IProductPageService, ProductPageService>();
+        builder.Services.AddScoped<IProductCreationService, ProductCreationService>();
 
         var app = builder.Build();
         app.UseExceptionHandler();
