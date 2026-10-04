@@ -83,6 +83,30 @@ Las pruebas están en `tests/Bff.Api.Tests`, agrupadas en `Services`, `Clients`,
 
 La fachada adapta datos para la presentación; el catálogo conserva el precio y el inventario conserva las existencias. `CanBuy` indica disponibilidad visual en esta demo, no autoriza una compra ni reserva stock. `SupplierCost` es un dato interno simulado: llega desde catálogo, pero no se publica en el BFF.
 
+## Por qué ProductPageService consulta en paralelo
+
+En este BFF se mantienen las consultas a catálogo e inventario **en paralelo** porque ambas son independientes: solo necesitan el `id` recibido en la petición, y la pantalla necesita los dos resultados. Así se reduce el tiempo de respuesta.
+
+```csharp
+var productTask = catalogClient.GetProductAsync(id, cancellationToken);
+var stockTask = inventoryClient.GetStockAsync(id, cancellationToken);
+
+await Task.WhenAll(productTask, stockTask);
+```
+
+Las dos llamadas comienzan antes de esperar sus resultados. Si catálogo tarda 200 ms e inventario 300 ms, la comparación aproximada es:
+
+| Ejecución | Tiempo de respuesta |
+| --- | --- |
+| Secuencial: primero catálogo, después inventario | 500 ms; los tiempos se suman. |
+| En paralelo | 300 ms; domina la consulta más lenta. |
+
+Estos tiempos son ilustrativos y no incluyen el trabajo adicional de composición y envío de la respuesta.
+
+La contrapartida es que se consulta inventario incluso si el producto no existe. Con llamadas secuenciales se podría comprobar primero el 404 del catálogo y evitar esa segunda llamada.
+
+La ejecución secuencial sería más adecuada si inventario necesitara un dato obtenido del catálogo, o si fueran frecuentes las consultas a productos inexistentes y se quisiera reducir las llamadas innecesarias al inventario. Para el funcionamiento actual, orientado a mostrar fichas de productos existentes, se mantiene la ejecución en paralelo.
+
 ## Probar la API
 
 ```powershell
