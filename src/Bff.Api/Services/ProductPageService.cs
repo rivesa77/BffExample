@@ -3,14 +3,18 @@ namespace Bff.Api.Services;
 using System.Globalization;
 using Bff.Api.Interfaces;
 using Bff.Api.Models;
+using FluentValidation;
 
 // Facade + agregación: la pantalla hace una petición y recibe su modelo completo.
 public sealed class ProductPageService(
     ICatalogClient catalogClient,
-    IInventoryClient inventoryClient) : IProductPageService
+    IInventoryClient inventoryClient,
+    IValidator<int> validator) : IProductPageService
 {
     public async Task<ProductPageDto?> GetAsync(int id, CancellationToken cancellationToken)
     {
+        await validator.ValidateAndThrowAsync(id, cancellationToken);
+
         // Las consultas son independientes y se ejecutan en paralelo.
         var productTask = catalogClient.GetProductAsync(id, cancellationToken);
         var stockTask = inventoryClient.GetStockAsync(id, cancellationToken);

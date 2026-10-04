@@ -6,6 +6,8 @@ using Bff.Api.Endpoints;
 using Bff.Api.ExceptionHandlers;
 using Bff.Api.Interfaces;
 using Bff.Api.Services;
+using Bff.Api.Validators;
+using FluentValidation;
 using Microsoft.Extensions.Options;
 
 public sealed class Program
@@ -15,6 +17,7 @@ public sealed class Program
         var builder = WebApplication.CreateBuilder(args);
         builder.Services.AddProblemDetails();
         builder.Services.AddExceptionHandler<BackendExceptionHandler>();
+        builder.Services.AddScoped<IValidator<int>, ProductIdValidator>();
         builder.Services.AddOptions<BackendOptions>()
             .BindConfiguration("Backends")
             .Validate(options => BackendOptions.IsValidUrl(options.CatalogBaseUrl)

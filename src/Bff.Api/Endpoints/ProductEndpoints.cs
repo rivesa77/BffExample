@@ -14,9 +14,6 @@ public static class ProductEndpoints
     private static async Task<Results<Ok<ProductPageDto>, ProblemHttpResult>> GetProductAsync(
         int id, IProductPageService service, CancellationToken cancellationToken)
     {
-        if (id <= 0)
-            return TypedResults.Problem(statusCode: 400, title: "El id debe ser mayor que cero.");
-
         var product = await service.GetAsync(id, cancellationToken);
         return product is null
             ? TypedResults.Problem(statusCode: 404, title: "Producto no encontrado.")

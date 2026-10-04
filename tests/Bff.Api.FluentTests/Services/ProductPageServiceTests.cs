@@ -3,7 +3,9 @@ namespace Bff.Api.FluentTests.Services;
 using Bff.Api.Interfaces;
 using Bff.Api.Models;
 using Bff.Api.Services;
+using Bff.Api.Validators;
 using FluentAssertions;
+using FluentValidation;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 
@@ -28,7 +30,7 @@ public sealed class ProductPageServiceTests
         catalog.Setup(client => client.GetProductAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(product);
         inventory.Setup(client => client.GetStockAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new InventoryStock(1, availableUnits));
-        var service = new ProductPageService(catalog.Object, inventory.Object);
+        var service = new ProductPageService(catalog.Object, inventory.Object, new ProductIdValidator());
 
         // Act
         var result = await service.GetAsync(1, CancellationToken.None);
@@ -50,7 +52,7 @@ public sealed class ProductPageServiceTests
             .ReturnsAsync((CatalogProduct?)null);
         inventory.Setup(client => client.GetStockAsync(999, It.IsAny<CancellationToken>()))
             .ReturnsAsync((InventoryStock?)null);
-        var service = new ProductPageService(catalog.Object, inventory.Object);
+        var service = new ProductPageService(catalog.Object, inventory.Object, new ProductIdValidator());
 
         // Act
         var result = await service.GetAsync(999, CancellationToken.None);
@@ -69,7 +71,7 @@ public sealed class ProductPageServiceTests
             .ReturnsAsync(new CatalogProduct(1, "Producto", "Descripción", 10m, "EUR"));
         inventory.Setup(client => client.GetStockAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync((InventoryStock?)null);
-        var service = new ProductPageService(catalog.Object, inventory.Object);
+        var service = new ProductPageService(catalog.Object, inventory.Object, new ProductIdValidator());
 
         // Act
         var action = () => service.GetAsync(1, CancellationToken.None);
@@ -95,7 +97,7 @@ public sealed class ProductPageServiceTests
             .Returns(catalogFails
                 ? Task.FromResult<InventoryStock?>(new(1, 3))
                 : Task.FromException<InventoryStock?>(expectedException));
-        var service = new ProductPageService(catalog.Object, inventory.Object);
+        var service = new ProductPageService(catalog.Object, inventory.Object, new ProductIdValidator());
 
         // Act
         var action = () => service.GetAsync(1, CancellationToken.None);
@@ -116,7 +118,7 @@ public sealed class ProductPageServiceTests
         var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
         catalog.Setup(client => client.GetProductAsync(1, It.IsAny<CancellationToken>())).Returns(productCompletion.Task);
         inventory.Setup(client => client.GetStockAsync(1, It.IsAny<CancellationToken>())).Returns(stockCompletion.Task);
-        var service = new ProductPageService(catalog.Object, inventory.Object);
+        var service = new ProductPageService(catalog.Object, inventory.Object, new ProductIdValidator());
 
         // Act
         var resultTask = service.GetAsync(1, CancellationToken.None);
@@ -133,6 +135,52 @@ public sealed class ProductPageServiceTests
     }
 
     [TestMethod]
+    [DataRow(0)]
+    [DataRow(-1)]
+    [DataRow(int.MinValue)]
+    public async Task GetAsync_WithInvalidId_ThrowsValidationExceptionWithoutCallingClients(int id)
+    {
+        // Arrange
+        var expectedResult = new { PropertyName = "Id", ErrorMessage = "El id debe ser mayor que cero." };
+        var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
+        var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
+        var service = new ProductPageService(catalog.Object, inventory.Object, new ProductIdValidator());
+
+        // Act
+        var action = () => service.GetAsync(id, CancellationToken.None);
+
+        // Assert
+        var assertion = await action.Should().ThrowExactlyAsync<ValidationException>();
+        var error = assertion.Which.Errors.Single();
+        var actualResult = new { error.PropertyName, error.ErrorMessage };
+        actualResult.Should().BeEquivalentTo(expectedResult);
+        catalog.VerifyNoOtherCalls();
+        inventory.VerifyNoOtherCalls();
+    }
+
+    [TestMethod]
+    public async Task GetAsync_WithPositiveInput_ComposesPageWithoutValidatingOutput()
+    {
+        // Arrange
+        var expectedResult = new ProductPageDto(2, "", "", -1m, "-1,00 eur", "Agotado", false);
+        var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
+        var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
+        catalog.Setup(client => client.GetProductAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProduct(2, "", "", -1m, "eur"));
+        inventory.Setup(client => client.GetStockAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new InventoryStock(3, -1));
+        var service = new ProductPageService(catalog.Object, inventory.Object, new ProductIdValidator());
+
+        // Act
+        var actualResult = await service.GetAsync(1, CancellationToken.None);
+
+        // Assert
+        actualResult.Should().BeEquivalentTo(expectedResult);
+        catalog.VerifyAll();
+        inventory.VerifyAll();
+    }
+
+    [TestMethod]
     public async Task GetAsync_WithCancellation_ForwardsTokenToBothClients()
     {
         // Arrange
@@ -140,11 +188,14 @@ public sealed class ProductPageServiceTests
         var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
         var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
         catalog.Setup(client => client.GetProductAsync(1, cancellation.Token))
-            .Returns((int _, CancellationToken token) => Task.FromCanceled<CatalogProduct?>(token));
+            .Returns((int _, CancellationToken token) =>
+            {
+                cancellation.Cancel();
+                return Task.FromCanceled<CatalogProduct?>(token);
+            });
         inventory.Setup(client => client.GetStockAsync(1, cancellation.Token))
             .Returns((int _, CancellationToken token) => Task.FromCanceled<InventoryStock?>(token));
-        var service = new ProductPageService(catalog.Object, inventory.Object);
-        await cancellation.CancelAsync();
+        var service = new ProductPageService(catalog.Object, inventory.Object, new ProductIdValidator());
 
         // Act
         var action = () => service.GetAsync(1, cancellation.Token);

@@ -1,6 +1,7 @@
 namespace Bff.Api.ExceptionHandlers;
 
 using System.Text.Json;
+using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,6 +17,7 @@ public sealed class BackendExceptionHandler(
 
         var statusCode = exception switch
         {
+            ValidationException => StatusCodes.Status400BadRequest,
             OperationCanceledException => StatusCodes.Status504GatewayTimeout,
             HttpRequestException or JsonException or InvalidDataException => StatusCodes.Status502BadGateway,
             _ => StatusCodes.Status500InternalServerError
@@ -31,6 +33,7 @@ public sealed class BackendExceptionHandler(
                 Status = statusCode,
                 Title = statusCode switch
                 {
+                    400 => "El id debe ser mayor que cero.",
                     504 => "El servicio de datos tardó demasiado en responder.",
                     502 => "No se pudo obtener la información del producto.",
                     _ => "Ocurrió un error inesperado."

@@ -3,9 +3,11 @@ namespace Bff.Api.FluentTests.Clients;
 using System.Net;
 using System.Text.Json;
 using Bff.Api.Clients;
-using Bff.Api.Models;
 using Bff.Api.FluentTests.Mocks;
+using Bff.Api.Models;
+using Bff.Api.Validators;
 using FluentAssertions;
+using FluentValidation;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 [TestClass]
@@ -21,7 +23,7 @@ public sealed class CatalogClientTests
             HttpStatusCode.OK,
             """{"id":4,"name":"Teclado","description":"Compacto","price":49.90,"currency":"EUR","supplierCost":25}""")));
         using var httpClient = BackendHttpMock.CreateClient(handler);
-        var client = new CatalogClient(httpClient);
+        var client = new CatalogClient(httpClient, new ProductIdValidator());
 
         // Act
         var product = await client.GetProductAsync(4, CancellationToken.None);
@@ -38,7 +40,7 @@ public sealed class CatalogClientTests
         CatalogProduct? expectedResult = null;
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
         using var httpClient = BackendHttpMock.CreateClient(handler);
-        var client = new CatalogClient(httpClient);
+        var client = new CatalogClient(httpClient, new ProductIdValidator());
 
         // Act
         var product = await client.GetProductAsync(999, CancellationToken.None);
@@ -56,7 +58,7 @@ public sealed class CatalogClientTests
         var expectedStatusCode = status;
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(new HttpResponseMessage(status)));
         using var httpClient = BackendHttpMock.CreateClient(handler);
-        var client = new CatalogClient(httpClient);
+        var client = new CatalogClient(httpClient, new ProductIdValidator());
 
         // Act
         var action = () => client.GetProductAsync(1, CancellationToken.None);
@@ -72,7 +74,7 @@ public sealed class CatalogClientTests
         // Arrange
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(BackendHttpMock.Json(HttpStatusCode.OK, "{invalid-json")));
         using var httpClient = BackendHttpMock.CreateClient(handler);
-        var client = new CatalogClient(httpClient);
+        var client = new CatalogClient(httpClient, new ProductIdValidator());
 
         // Act
         var action = () => client.GetProductAsync(1, CancellationToken.None);
@@ -87,13 +89,55 @@ public sealed class CatalogClientTests
         // Arrange
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(BackendHttpMock.Json(HttpStatusCode.OK, "null")));
         using var httpClient = BackendHttpMock.CreateClient(handler);
-        var client = new CatalogClient(httpClient);
+        var client = new CatalogClient(httpClient, new ProductIdValidator());
 
         // Act
         var action = () => client.GetProductAsync(1, CancellationToken.None);
 
         // Assert
         await action.Should().ThrowExactlyAsync<InvalidDataException>();
+    }
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(-1)]
+    [DataRow(int.MinValue)]
+    public async Task GetProductAsync_WithInvalidId_ThrowsValidationExceptionWithoutSendingHttp(int id)
+    {
+        // Arrange
+        var expectedResult = new { PropertyName = "Id", ErrorMessage = "El id debe ser mayor que cero." };
+        var handler = BackendHttpMock.Create((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK)));
+        using var httpClient = BackendHttpMock.CreateClient(handler);
+        var client = new CatalogClient(httpClient, new ProductIdValidator());
+
+        // Act
+        var action = () => client.GetProductAsync(id, CancellationToken.None);
+
+        // Assert
+        var assertion = await action.Should().ThrowExactlyAsync<ValidationException>();
+        var error = assertion.Which.Errors.Single();
+        var actualResult = new { error.PropertyName, error.ErrorMessage };
+        actualResult.Should().BeEquivalentTo(expectedResult);
+        handler.VerifyNoOtherCalls();
+    }
+
+    [TestMethod]
+    public async Task GetProductAsync_WithPositiveInput_ReturnsBackendDataWithoutValidation()
+    {
+        // Arrange
+        var expectedResult = new CatalogProduct(2, "", "", -1m, "eur");
+        var handler = BackendHttpMock.Create((_, _) => Task.FromResult(BackendHttpMock.Json(
+            HttpStatusCode.OK, """{"id":2,"name":"","description":"","price":-1,"currency":"eur"}""")));
+        using var httpClient = BackendHttpMock.CreateClient(handler);
+        var client = new CatalogClient(httpClient, new ProductIdValidator());
+
+        // Act
+        var actualResult = await client.GetProductAsync(1, CancellationToken.None);
+
+        // Assert
+        actualResult.Should().BeEquivalentTo(expectedResult);
+        BackendHttpMock.VerifyGet(handler, "/catalog/products/1");
     }
 
     [TestMethod]
@@ -108,7 +152,7 @@ public sealed class CatalogClientTests
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
         using var httpClient = BackendHttpMock.CreateClient(handler);
-        var client = new CatalogClient(httpClient);
+        var client = new CatalogClient(httpClient, new ProductIdValidator());
 
         // Act
         var action = () => client.GetProductAsync(1, cancellation.Token);

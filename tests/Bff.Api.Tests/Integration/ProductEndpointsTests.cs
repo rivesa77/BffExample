@@ -1,11 +1,11 @@
 namespace Bff.Api.Tests.Integration;
 
-using System.Net;
-using System.Text.Json;
 using Bff.Api.Models;
 using Bff.Api.Tests.Mocks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
+using System.Net;
+using System.Text.Json;
 
 [TestClass]
 [TestCategory("Integration")]
@@ -51,6 +51,7 @@ public sealed class ProductEndpointsTests
     [TestMethod]
     [DataRow(0)]
     [DataRow(-1)]
+    [DataRow(int.MinValue)]
     public async Task GetProduct_WithInvalidId_Returns400WithoutCallingBackends(int id)
     {
         // Arrange

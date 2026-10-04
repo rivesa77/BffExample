@@ -21,7 +21,7 @@ Las dos APIs simuladas viven en `Demo.Backend` para ejecutar el ejemplo con solo
 
 ## Ejecutar
 
-Requisito: SDK de .NET 10. Las aplicaciones no requieren base de datos ni paquetes NuGet adicionales. Los proyectos de pruebas usan MSTest.Sdk, Moq y Microsoft.AspNetCore.Mvc.Testing; la suite de aserciones fluidas añade FluentAssertions 7.2.0. `NuGet.Config` configura nuget.org para restaurar estos paquetes. La primera restauración requiere conexión si no están en la caché local.
+Requisito: SDK de .NET 10. Las aplicaciones no requieren base de datos. `Bff.Api` usa FluentValidation 12.1.1. Los proyectos de pruebas usan MSTest.Sdk, Moq y Microsoft.AspNetCore.Mvc.Testing; la suite de aserciones fluidas añade FluentAssertions 7.2.0. `NuGet.Config` configura nuget.org para restaurar estos paquetes. La primera restauración requiere conexión si no están en la caché local.
 
 Desde la carpeta raíz, compila:
 
@@ -71,6 +71,7 @@ src/
 │   ├── Interfaces/        # Contratos de clientes y servicios
 │   ├── Models/            # Records y DTO
 │   ├── Services/          # Fachada y agregación
+│   ├── Validators/        # Reglas de FluentValidation
 │   ├── wwwroot/           # Página web
 │   └── Program.cs
 └── Demo.Backend/
@@ -79,9 +80,29 @@ src/
     └── Program.cs
 ```
 
-Las pruebas están en `tests/Bff.Api.Tests` y `tests/Bff.Api.FluentTests`, agrupadas en `Services`, `Clients`, `Configuration`, `ExceptionHandlers`, `Integration` y `Mocks`.
+Las pruebas están en `tests/Bff.Api.Tests` y `tests/Bff.Api.FluentTests`, agrupadas en `Services`, `Clients`, `Configuration`, `ExceptionHandlers`, `Integration`, `Validators` y `Mocks`.
 
 La fachada adapta datos para la presentación; el catálogo conserva el precio y el inventario conserva las existencias. `CanBuy` indica disponibilidad visual en esta demo, no autoriza una compra ni reserva stock. `SupplierCost` es un dato interno simulado: llega desde catálogo, pero no se publica en el BFF.
+
+## Validaciones con FluentValidation
+
+`ProductIdValidator`, en `Bff.Api/Validators`, valida el identificador de entrada con la regla `id > 0`. Se registra como `IValidator<int>` en `Program.cs` y se comparte entre los tres componentes, que mantienen sus firmas actuales:
+
+| Componente | Dato de entrada | Cuándo se valida |
+| --- | --- | --- |
+| `CatalogClient.GetProductAsync` | `id` | Antes de enviar la petición HTTP al catálogo. |
+| `InventoryClient.GetStockAsync` | `productId` | Antes de enviar la petición HTTP al inventario. |
+| `ProductPageService.GetAsync` | `id` | Antes de lanzar las consultas a los clientes. |
+
+La validación se ejecuta de forma explícita y recibe el token de cancelación. Por ejemplo, al entrar en `CatalogClient.GetProductAsync`:
+
+```csharp
+await validator.ValidateAndThrowAsync(id, cancellationToken);
+```
+
+Un identificador cero o negativo lanza `ValidationException` sin consultar las dependencias. `BackendExceptionHandler` la convierte en **HTTP 400** con el título `El id debe ser mayor que cero.`. El endpoint delega esta comprobación en el servicio, por lo que la misma regla protege las llamadas HTTP y las invocaciones directas desde código.
+
+FluentValidation se aplica únicamente a estos parámetros de entrada. `CatalogProduct`, `InventoryStock` y `ProductPageDto` son resultados y no tienen validadores. Se mantienen el tratamiento de errores HTTP, la deserialización JSON y los casos de respuesta nula o inventario ausente.
 
 ## Por qué ProductPageService consulta en paralelo
 
@@ -144,11 +165,11 @@ Los errores usan `ProblemDetails`. Los detalles técnicos se registran en el ser
 
 ### Pruebas de Bff.Api
 
-Se conservan dos suites con los mismos 46 casos para comparar las aserciones:
+Se conservan dos suites con los mismos 65 casos para comparar las aserciones:
 
 | Proyecto | Aserciones | Ejecutor |
 | --- | --- | --- |
-| `Bff.Api.Tests` | `Assert` y `StringAssert` de `Microsoft.VisualStudio.TestTools.UnitTesting`. | MSTest con Microsoft.Testing.Platform. |
+| `Bff.Api.Tests` | `Assert`, `CollectionAssert` y `StringAssert` de `Microsoft.VisualStudio.TestTools.UnitTesting`. | MSTest con Microsoft.Testing.Platform. |
 | `Bff.Api.FluentTests` | FluentAssertions: `Should().Be()`, `BeEquivalentTo()`, `ThrowAsync()` y `ThrowExactlyAsync()`. | MSTest con Microsoft.Testing.Platform. |
 
 Se mantiene una suite con UnitTesting y otra equivalente con FluentAssertions. MSTest sigue descubriendo y ejecutando las pruebas de ambas suites. Las dos mantienen `[TestMethod]`, los bloques Arrange/Act/Assert y los mocks estrictos.
@@ -198,13 +219,16 @@ Los dos proyectos usan **MSTest.Sdk con Microsoft.Testing.Platform**. `global.js
 
 | Carpeta | Comportamientos comprobados |
 | --- | --- |
-| `Services` | Agregación de producto e inventario, precio para la pantalla, disponibilidad, producto inexistente, inventario ausente, errores, consultas en paralelo y propagación de cancelación. |
-| `Clients` | Ruta HTTP, deserialización, 404, errores HTTP, JSON inválido, cuerpo JSON nulo y cancelación. |
+| `Services` | Validación del identificador de entrada sin consultar clientes cuando es inválido, agregación, precio para la pantalla, disponibilidad, producto inexistente, inventario ausente, errores, consultas en paralelo y propagación de cancelación. |
+| `Clients` | Validación del identificador de entrada sin enviar HTTP cuando es inválido, ruta HTTP, deserialización, 404, errores HTTP, JSON inválido, cuerpo JSON nulo y cancelación. |
+| `Validators` | Identificadores positivos, cero, negativos y los límites `int.MinValue` e `int.MaxValue`; propiedad y mensaje de error esperados. |
 | `Configuration` | URLs absolutas HTTP(S) y barra final obligatoria. |
 | `ExceptionHandlers` | No escribir una respuesta de error cuando el cliente cancela la petición. |
-| `Integration` | DTO público, exclusión de datos internos, 400/404/502/504/500 con ProblemDetails, inventario inconsistente, health y página HTML. |
+| `Integration` | DTO público, exclusión de datos internos, 400 por entradas inválidas sin llamadas a backends, 404/502/504/500 con ProblemDetails, inventario ausente, health y página HTML. |
 
 **Las llamadas a `Demo.Backend` se resuelven con mocks de Moq, siempre con `MockBehavior.Strict`.** La fachada se prueba con mocks de `ICatalogClient` e `IInventoryClient`. Los clientes HTTP y las pruebas de integración usan un mock de `HttpMessageHandler`, con setups para el envío y la liberación del handler. Las pruebas de integración levantan el BFF en memoria con `WebApplicationFactory` y ejecutan los clientes y la fachada reales, usando el transporte mockeado. No requieren iniciar el backend, abrir puertos ni usar una base de datos.
+
+El validador se prueba con instancias reales, sin mockear sus reglas. Cada caso declara el resultado esperado en Arrange y compara `IsValid`, la propiedad y el mensaje de error cuando corresponde. También se comprueba que los clientes y la fachada ejecuten la validación antes de llamar a las dependencias, que la API traduzca una entrada inválida a HTTP 400 y que los resultados se devuelvan sin validación de salida.
 
 El timeout 504 se simula mediante una cancelación del transporte. Se comprueba su traducción a ProblemDetails sin esperar los tres segundos del timeout real. La página HTML se verifica como recurso estático; no se ejecuta JavaScript en un navegador.
 
@@ -227,4 +251,4 @@ $env:Backends__InventoryBaseUrl = "http://localhost:5101/"
 
 Ejemplo didáctico con datos en memoria y HTTP local. No incluye autenticación, compras ni persistencia. Para un despliegue real habría que incorporar HTTPS y seguridad según el tipo de cliente. Se mantiene una sola API de BFF organizada por carpetas para que los patrones sean fáciles de seguir.
 
-Referencias oficiales: [patrón BFF](https://learn.microsoft.com/es-es/azure/architecture/patterns/backends-for-frontends) y [clientes HTTP con IHttpClientFactory](https://learn.microsoft.com/en-us/dotnet/core/extensions/httpclient-factory).
+Referencias oficiales: [patrón BFF](https://learn.microsoft.com/es-es/azure/architecture/patterns/backends-for-frontends), [clientes HTTP con IHttpClientFactory](https://learn.microsoft.com/en-us/dotnet/core/extensions/httpclient-factory), [validación asíncrona con FluentValidation](https://docs.fluentvalidation.net/en/latest/async.html) y [pruebas de validadores](https://docs.fluentvalidation.net/en/latest/testing.html).
