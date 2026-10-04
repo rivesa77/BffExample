@@ -11,7 +11,9 @@ public static class BackendHttpMock
     public static Mock<HttpMessageHandler> Create(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond)
     {
-        var handler = new Mock<HttpMessageHandler>();
+        var handler = new Mock<HttpMessageHandler>(MockBehavior.Strict);
+        // HttpClient y la fábrica liberan el handler al finalizar cada prueba.
+        handler.Protected().Setup("Dispose", ItExpr.IsAny<bool>());
         handler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())

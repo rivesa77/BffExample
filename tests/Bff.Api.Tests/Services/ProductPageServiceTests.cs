@@ -46,8 +46,8 @@ public sealed class ProductPageServiceTests
     public async Task GetAsync_WhenProductDoesNotExist_ReturnsNull()
     {
         // Arrange
-        var catalog = new Mock<ICatalogClient>();
-        var inventory = new Mock<IInventoryClient>();
+        var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
+        var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
         catalog.Setup(client => client.GetProductAsync(999, It.IsAny<CancellationToken>()))
             .ReturnsAsync((CatalogProduct?)null);
         inventory.Setup(client => client.GetStockAsync(999, It.IsAny<CancellationToken>()))
@@ -65,8 +65,8 @@ public sealed class ProductPageServiceTests
     public async Task GetAsync_WhenInventoryIsMissing_ThrowsInvalidDataException()
     {
         // Arrange
-        var catalog = new Mock<ICatalogClient>();
-        var inventory = new Mock<IInventoryClient>();
+        var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
+        var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
         catalog.Setup(client => client.GetProductAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CatalogProduct(1, "Producto", "Descripción", 10m, "EUR"));
         inventory.Setup(client => client.GetStockAsync(1, It.IsAny<CancellationToken>()))
@@ -87,8 +87,8 @@ public sealed class ProductPageServiceTests
     {
         // Arrange
         var failure = new HttpRequestException("Fallo simulado.");
-        var catalog = new Mock<ICatalogClient>();
-        var inventory = new Mock<IInventoryClient>();
+        var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
+        var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
         catalog.Setup(client => client.GetProductAsync(1, It.IsAny<CancellationToken>()))
             .Returns(catalogFails
                 ? Task.FromException<CatalogProduct?>(failure)
@@ -113,8 +113,8 @@ public sealed class ProductPageServiceTests
         // Arrange
         var productCompletion = new TaskCompletionSource<CatalogProduct?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var stockCompletion = new TaskCompletionSource<InventoryStock?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var catalog = new Mock<ICatalogClient>();
-        var inventory = new Mock<IInventoryClient>();
+        var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
+        var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
         catalog.Setup(client => client.GetProductAsync(1, It.IsAny<CancellationToken>())).Returns(productCompletion.Task);
         inventory.Setup(client => client.GetStockAsync(1, It.IsAny<CancellationToken>())).Returns(stockCompletion.Task);
         var service = new ProductPageService(catalog.Object, inventory.Object);
