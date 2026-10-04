@@ -15,37 +15,52 @@ public sealed class BackendExceptionHandler(
         if (context.RequestAborted.IsCancellationRequested)
             return false;
 
-        var statusCode = exception switch
-        {
-            ValidationException => StatusCodes.Status400BadRequest,
-            OperationCanceledException => StatusCodes.Status504GatewayTimeout,
-            HttpRequestException or JsonException or InvalidDataException => StatusCodes.Status502BadGateway,
-            _ => StatusCodes.Status500InternalServerError
-        };
+        var problem = CreateProblemDetails(exception);
 
         logger.LogError(exception, "Error al atender {Path}", context.Request.Path);
-        context.Response.StatusCode = statusCode;
-
-        ProblemDetails problem = exception is ValidationException validation
-            ? new HttpValidationProblemDetails(validation.Errors
-                .GroupBy(error => error.PropertyName)
-                .ToDictionary(group => group.Key, group => group.Select(error => error.ErrorMessage).ToArray()))
-            : new ProblemDetails();
-        problem.Status = statusCode;
-        problem.Title = statusCode switch
-        {
-            400 when exception is ValidationException inputError
-                && inputError.Errors.All(error => error.PropertyName == "Id") => "El id debe ser mayor que cero.",
-            400 => "Los datos de entrada no son válidos.",
-            504 => "El servicio de datos tardó demasiado en responder.",
-            502 => "No se pudo obtener la información del producto.",
-            _ => "Ocurrió un error inesperado."
-        };
+        context.Response.StatusCode = problem.Status ?? StatusCodes.Status500InternalServerError;
 
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = context,
             ProblemDetails = problem
         });
+    }
+
+    private static ProblemDetails CreateProblemDetails(Exception exception)
+    {
+        if (exception is ValidationException validation)
+            return CreateValidationProblemDetails(validation);
+
+        var (statusCode, title) = exception switch
+        {
+            OperationCanceledException =>
+                (StatusCodes.Status504GatewayTimeout, "El servicio de datos tardó demasiado en responder."),
+            HttpRequestException or JsonException or InvalidDataException =>
+                (StatusCodes.Status502BadGateway, "No se pudo obtener la información del producto."),
+            _ =>
+                (StatusCodes.Status500InternalServerError, "Ocurrió un error inesperado.")
+        };
+
+        return new ProblemDetails { Status = statusCode, Title = title };
+    }
+
+    private static HttpValidationProblemDetails CreateValidationProblemDetails(ValidationException exception)
+    {
+        var errorsByProperty = exception.Errors
+            .GroupBy(error => error.PropertyName)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(error => error.ErrorMessage).ToArray());
+
+        var onlyIdErrors = errorsByProperty.Keys.All(propertyName => propertyName == "Id");
+
+        return new HttpValidationProblemDetails(errorsByProperty)
+        {
+            Status = StatusCodes.Status400BadRequest,
+            Title = onlyIdErrors
+                ? "El id debe ser mayor que cero."
+                : "Los datos de entrada no son válidos."
+        };
     }
 }

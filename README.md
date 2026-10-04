@@ -232,13 +232,15 @@ Respuesta:
 
 Los errores de validación usan `HttpValidationProblemDetails` y los fallos de dependencias usan `ProblemDetails`. Los detalles técnicos se registran en el servidor. La cancelación de la petición se propaga a las llamadas HTTP. La consulta de la ficha requiere las dos fuentes: si alguna falla, no se devuelve una ficha parcial, incluso si la otra devuelve un 404.
 
+En `BackendExceptionHandler`, `TryHandleAsync` coordina el registro y envío de la respuesta. `CreateProblemDetails` selecciona juntos el estado HTTP y el título mediante un único `switch`, y delega la validación en `CreateValidationProblemDetails`. Este último agrupa los mensajes por campo y conserva el título específico para errores de `Id`.
+
 `/health` confirma que cada proceso responde; no comprueba sus dependencias.
 
 ## Verificación automática
 
 ### Pruebas de Bff.Api
 
-Se conservan dos suites con los mismos 125 casos para comparar las aserciones:
+Se conservan dos suites con los mismos 128 casos para comparar las aserciones:
 
 | Proyecto | Aserciones | Ejecutor |
 | --- | --- | --- |
@@ -296,7 +298,7 @@ Los dos proyectos usan **MSTest.Sdk con Microsoft.Testing.Platform**. `global.js
 | `Clients` | Validación de entradas sin enviar HTTP cuando son inválidas, GET y POST con JSON, deserialización, 404, errores HTTP, JSON inválido, cuerpo JSON nulo y cancelación. |
 | `Validators` | Identificadores positivos y límites de enteros; campos del alta nulos o vacíos, límites de longitud, precios omitidos o negativos, formato de moneda, existencias negativas y varios errores simultáneos. |
 | `Configuration` | URLs absolutas HTTP(S) y barra final obligatoria. |
-| `ExceptionHandlers` | No escribir una respuesta de error cuando el cliente cancela la petición. |
+| `ExceptionHandlers` | Agrupar varios mensajes por campo, seleccionar el título de validación, devolver `false` si no se puede escribir la respuesta y no escribir una respuesta de error cuando el cliente cancela la petición. |
 | `Integration` | Alta con HTTP 201 y Location, DTO público, exclusión de datos internos, 400 por entradas inválidas sin llamadas a backends y errores por campo, 404/502/504/500 con ProblemDetails, inventario ausente, health y página HTML. |
 
 **Las llamadas a `Demo.Backend` se resuelven con mocks de Moq, siempre con `MockBehavior.Strict`.** La fachada se prueba con mocks de `ICatalogClient` e `IInventoryClient`. Los clientes HTTP y las pruebas de integración usan un mock de `HttpMessageHandler`, con setups para el envío y la liberación del handler. Las pruebas de integración levantan el BFF en memoria con `WebApplicationFactory` y ejecutan los clientes y la fachada reales, usando el transporte mockeado. No requieren iniciar el backend, abrir puertos ni usar una base de datos.
