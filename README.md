@@ -21,7 +21,7 @@ Las dos APIs simuladas viven en `Demo.Backend` para ejecutar el ejemplo con solo
 
 ## Ejecutar
 
-Requisito: SDK de .NET 10. No requiere base de datos ni paquetes NuGet adicionales. `NuGet.Config` permite restaurar usando solo el SDK instalado, sin fuentes externas. Si agregas paquetes en el futuro, tendrás que configurar una fuente NuGet.
+Requisito: SDK de .NET 10. Las aplicaciones no requieren base de datos ni paquetes NuGet adicionales. El proyecto de pruebas usa MSTest.Sdk, Moq y Microsoft.AspNetCore.Mvc.Testing; `NuGet.Config` configura nuget.org para restaurarlos. La primera restauración requiere conexión si esos paquetes no están en la caché local.
 
 Desde la carpeta raíz, compila:
 
@@ -79,6 +79,8 @@ src/
     └── Program.cs
 ```
 
+Las pruebas están en `tests/Bff.Api.Tests`, agrupadas en `Services`, `Clients`, `Configuration`, `ExceptionHandlers`, `Integration` y `Mocks`.
+
 La fachada adapta datos para la presentación; el catálogo conserva el precio y el inventario conserva las existencias. `CanBuy` indica disponibilidad visual en esta demo, no autoriza una compra ni reserva stock. `SupplierCost` es un dato interno simulado: llega desde catálogo, pero no se publica en el BFF.
 
 ## Probar la API
@@ -115,6 +117,29 @@ Los errores usan `ProblemDetails`. Los detalles técnicos se registran en el ser
 `/health` confirma que cada proceso responde; no comprueba sus dependencias.
 
 ## Verificación automática
+
+### Pruebas de Bff.Api
+
+```powershell
+dotnet restore BffExample.slnx --configfile NuGet.Config
+dotnet test --project tests/Bff.Api.Tests/Bff.Api.Tests.csproj --no-restore
+```
+
+El proyecto usa **MSTest.Sdk con Microsoft.Testing.Platform**. `global.json` selecciona ese runner para `dotnet test` en .NET 10. Todas las pruebas llevan `[TestMethod]` y los bloques `// Arrange`, `// Act`, `// Assert`. `[DataRow]` permite ejecutar varios casos con el mismo método.
+
+| Carpeta | Comportamientos comprobados |
+| --- | --- |
+| `Services` | Agregación de producto e inventario, precio para la pantalla, disponibilidad, producto inexistente, inventario ausente, errores, consultas en paralelo y propagación de cancelación. |
+| `Clients` | Ruta HTTP, deserialización, 404, errores HTTP, JSON inválido, cuerpo JSON nulo y cancelación. |
+| `Configuration` | URLs absolutas HTTP(S) y barra final obligatoria. |
+| `ExceptionHandlers` | No escribir una respuesta de error cuando el cliente cancela la petición. |
+| `Integration` | DTO público, exclusión de datos internos, 400/404/502/504/500 con ProblemDetails, inventario inconsistente, health y página HTML. |
+
+**Las llamadas a `Demo.Backend` se resuelven con mocks de Moq.** La fachada se prueba con mocks de `ICatalogClient` e `IInventoryClient`. Los clientes HTTP y las pruebas de integración usan un mock de `HttpMessageHandler`. Las pruebas de integración levantan el BFF en memoria con `WebApplicationFactory` y ejecutan los clientes y la fachada reales, usando el transporte mockeado. No requieren iniciar el backend, abrir puertos ni usar una base de datos.
+
+El timeout 504 se simula mediante una cancelación del transporte. Se comprueba su traducción a ProblemDetails sin esperar los tres segundos del timeout real. La página HTML se verifica como recurso estático; no se ejecuta JavaScript en un navegador.
+
+### Prueba de humo con los dos procesos
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-test.ps1
