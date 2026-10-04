@@ -13,13 +13,14 @@ public sealed class BackendOptionsTests
     public void IsValidUrl_WithAbsoluteHttpUrlAndTrailingSlash_ReturnsTrue(string url)
     {
         // Arrange
+        const bool expectedResult = true;
         var baseUrl = url;
 
         // Act
         var isValid = BackendOptions.IsValidUrl(baseUrl);
 
         // Assert
-        Assert.IsTrue(isValid);
+        Assert.AreEqual(expectedResult, isValid);
     }
 
     [TestMethod]
@@ -31,12 +32,13 @@ public sealed class BackendOptionsTests
     public void IsValidUrl_WithInvalidBaseUrl_ReturnsFalse(string url)
     {
         // Arrange
+        const bool expectedResult = false;
         var baseUrl = url;
 
         // Act
         var isValid = BackendOptions.IsValidUrl(baseUrl);
 
         // Assert
-        Assert.IsFalse(isValid);
+        Assert.AreEqual(expectedResult, isValid);
     }
 }

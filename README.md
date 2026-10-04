@@ -151,7 +151,24 @@ Se conservan dos suites con los mismos 46 casos para comparar las aserciones:
 | `Bff.Api.Tests` | `Assert` y `StringAssert` de `Microsoft.VisualStudio.TestTools.UnitTesting`. | MSTest con Microsoft.Testing.Platform. |
 | `Bff.Api.FluentTests` | FluentAssertions: `Should().Be()`, `BeEquivalentTo()`, `ThrowAsync()` y `ThrowExactlyAsync()`. | MSTest con Microsoft.Testing.Platform. |
 
-Las pruebas originales con UnitTesting se mantienen intactas. FluentAssertions cambia la sintaxis de las aserciones; MSTest sigue descubriendo y ejecutando las pruebas de ambas suites. Las dos mantienen `[TestMethod]`, los bloques Arrange/Act/Assert y los mocks estrictos.
+Se mantiene una suite con UnitTesting y otra equivalente con FluentAssertions. MSTest sigue descubriendo y ejecutando las pruebas de ambas suites. Las dos mantienen `[TestMethod]`, los bloques Arrange/Act/Assert y los mocks estrictos.
+
+Al comparar un objeto obtenido, las dos suites declaran `expectedResult` en Arrange, antes de ejecutar la operación. Los records se comparan completos con `Assert.AreEqual(expectedResult, actualResult)` o `actualResult.Should().BeEquivalentTo(expectedResult)`. Los resultados nulos también tienen un expected explícito. En respuestas HTTP se agrupan el estado, el tipo de contenido y los datos estables del cuerpo; los errores no comparan identificadores de petición variables. Las excepciones se verifican por su tipo y, cuando corresponde, con `expectedException` o `expectedStatusCode` definidos en Arrange.
+
+Por ejemplo, en las pruebas del cliente de catálogo:
+
+```csharp
+// Arrange
+var expectedResult = new CatalogProduct(4, "Teclado", "Compacto", 49.90m, "EUR");
+// Configurar el cliente y el transporte HTTP con mocks estrictos.
+
+// Act
+var product = await client.GetProductAsync(4, CancellationToken.None);
+
+// Assert (UnitTesting)
+Assert.AreEqual(expectedResult, product);
+// En la suite FluentAssertions: product.Should().BeEquivalentTo(expectedResult);
+```
 
 ```powershell
 dotnet restore BffExample.slnx --configfile NuGet.Config

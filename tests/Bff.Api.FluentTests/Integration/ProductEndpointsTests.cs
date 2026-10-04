@@ -2,6 +2,7 @@ namespace Bff.Api.FluentTests.Integration;
 
 using System.Net;
 using System.Text.Json;
+using Bff.Api.Models;
 using Bff.Api.FluentTests.Mocks;
 using FluentAssertions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -18,6 +19,14 @@ public sealed class ProductEndpointsTests
         int availableUnits, bool canBuy, string availability)
     {
         // Arrange
+        var expectedResult = new
+        {
+            StatusCode = HttpStatusCode.OK,
+            ContentType = "application/json",
+            Product = new ProductPageDto(1, "Portátil", "Equipo para trabajar.", 899.90m,
+                "899,90 EUR", availability, canBuy)
+        };
+        string[] expectedProperties = ["id", "name", "description", "price", "displayPrice", "availability", "canBuy"];
         var backend = CreateBackend(availableUnits);
         using var factory = new BffWebApplicationFactory(backend);
         using var client = factory.CreateClient();
@@ -25,19 +34,17 @@ public sealed class ProductEndpointsTests
         // Act
         using var response = await client.GetAsync("/bff/products/1");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var actualResult = new
+        {
+            StatusCode = response.StatusCode,
+            ContentType = response.Content.Headers.ContentType?.MediaType,
+            Product = body.RootElement.Deserialize<ProductPageDto>(JsonSerializerOptions.Web)
+        };
+        var actualProperties = body.RootElement.EnumerateObject().Select(property => property.Name).ToArray();
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        (response.Content.Headers.ContentType?.MediaType).Should().Be("application/json");
-        body.RootElement.GetProperty("id").GetInt32().Should().Be(1);
-        body.RootElement.GetProperty("name").GetString().Should().Be("Portátil");
-        body.RootElement.GetProperty("description").GetString().Should().Be("Equipo para trabajar.");
-        body.RootElement.GetProperty("price").GetDecimal().Should().Be(899.90m);
-        body.RootElement.GetProperty("displayPrice").GetString().Should().Be("899,90 EUR");
-        body.RootElement.GetProperty("availability").GetString().Should().Be(availability);
-        body.RootElement.GetProperty("canBuy").GetBoolean().Should().Be(canBuy);
-        body.RootElement.TryGetProperty("supplierCost", out _).Should().BeFalse();
-        body.RootElement.TryGetProperty("availableUnits", out _).Should().BeFalse();
+        actualResult.Should().BeEquivalentTo(expectedResult);
+        actualProperties.Should().BeEquivalentTo(expectedProperties);
         BackendHttpMock.VerifyGet(backend, "/catalog/products/1");
         BackendHttpMock.VerifyGet(backend, "/inventory/products/1");
     }
@@ -48,6 +55,13 @@ public sealed class ProductEndpointsTests
     public async Task GetProduct_WithInvalidId_Returns400WithoutCallingBackends(int id)
     {
         // Arrange
+        var expectedResult = new
+        {
+            StatusCode = HttpStatusCode.BadRequest,
+            ContentType = "application/problem+json",
+            Status = 400,
+            Title = "El id debe ser mayor que cero."
+        };
         var backend = CreateBackend();
         using var factory = new BffWebApplicationFactory(backend);
         using var client = factory.CreateClient();
@@ -55,12 +69,16 @@ public sealed class ProductEndpointsTests
         // Act
         using var response = await client.GetAsync($"/bff/products/{id}");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var actualResult = new
+        {
+            StatusCode = response.StatusCode,
+            ContentType = response.Content.Headers.ContentType?.MediaType,
+            Status = body.RootElement.GetProperty("status").GetInt32(),
+            Title = body.RootElement.GetProperty("title").GetString()
+        };
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        (response.Content.Headers.ContentType?.MediaType).Should().Be("application/problem+json");
-        body.RootElement.GetProperty("status").GetInt32().Should().Be(400);
-        body.RootElement.GetProperty("title").GetString().Should().Be("El id debe ser mayor que cero.");
+        actualResult.Should().BeEquivalentTo(expectedResult);
         backend.Invocations.Should().BeEmpty();
     }
 
@@ -68,6 +86,13 @@ public sealed class ProductEndpointsTests
     public async Task GetProduct_WhenProductDoesNotExist_Returns404ProblemDetails()
     {
         // Arrange
+        var expectedResult = new
+        {
+            StatusCode = HttpStatusCode.NotFound,
+            ContentType = "application/problem+json",
+            Status = 404,
+            Title = "Producto no encontrado."
+        };
         var backend = BackendHttpMock.Create((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
         using var factory = new BffWebApplicationFactory(backend);
         using var client = factory.CreateClient();
@@ -75,12 +100,16 @@ public sealed class ProductEndpointsTests
         // Act
         using var response = await client.GetAsync("/bff/products/999");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var actualResult = new
+        {
+            StatusCode = response.StatusCode,
+            ContentType = response.Content.Headers.ContentType?.MediaType,
+            Status = body.RootElement.GetProperty("status").GetInt32(),
+            Title = body.RootElement.GetProperty("title").GetString()
+        };
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        (response.Content.Headers.ContentType?.MediaType).Should().Be("application/problem+json");
-        body.RootElement.GetProperty("status").GetInt32().Should().Be(404);
-        body.RootElement.GetProperty("title").GetString().Should().Be("Producto no encontrado.");
+        actualResult.Should().BeEquivalentTo(expectedResult);
     }
 
     [TestMethod]
@@ -93,6 +122,18 @@ public sealed class ProductEndpointsTests
     public async Task GetProduct_WithBackendFailure_ReturnsSafeProblemDetails(string failure, int expectedStatus)
     {
         // Arrange
+        var expectedResult = new
+        {
+            StatusCode = (HttpStatusCode)expectedStatus,
+            ContentType = "application/problem+json",
+            Status = expectedStatus,
+            Title = expectedStatus switch
+            {
+                504 => "El servicio de datos tardó demasiado en responder.",
+                502 => "No se pudo obtener la información del producto.",
+                _ => "Ocurrió un error inesperado."
+            }
+        };
         const string internalDetail = "Detalle interno que no debe publicarse.";
         var backend = BackendHttpMock.Create((_, _) => failure switch
         {
@@ -110,17 +151,16 @@ public sealed class ProductEndpointsTests
         using var response = await client.GetAsync("/bff/products/1");
         var responseText = await response.Content.ReadAsStringAsync();
         using var body = JsonDocument.Parse(responseText);
+        var actualResult = new
+        {
+            StatusCode = response.StatusCode,
+            ContentType = response.Content.Headers.ContentType?.MediaType,
+            Status = body.RootElement.GetProperty("status").GetInt32(),
+            Title = body.RootElement.GetProperty("title").GetString()
+        };
 
         // Assert
-        ((int)response.StatusCode).Should().Be(expectedStatus);
-        (response.Content.Headers.ContentType?.MediaType).Should().Be("application/problem+json");
-        body.RootElement.GetProperty("status").GetInt32().Should().Be(expectedStatus);
-        body.RootElement.GetProperty("title").GetString().Should().Be(expectedStatus switch
-        {
-            504 => "El servicio de datos tardó demasiado en responder.",
-            502 => "No se pudo obtener la información del producto.",
-            _ => "Ocurrió un error inesperado."
-        });
+        actualResult.Should().BeEquivalentTo(expectedResult);
         responseText.Should().NotContain(internalDetail);
     }
 
@@ -128,6 +168,13 @@ public sealed class ProductEndpointsTests
     public async Task GetProduct_WhenExistingProductHasNoInventory_Returns502()
     {
         // Arrange
+        var expectedResult = new
+        {
+            StatusCode = HttpStatusCode.BadGateway,
+            ContentType = "application/problem+json",
+            Status = 502,
+            Title = "No se pudo obtener la información del producto."
+        };
         var backend = BackendHttpMock.Create((request, _) => Task.FromResult(
             request.RequestUri!.AbsolutePath.StartsWith("/catalog/", StringComparison.Ordinal)
                 ? CatalogResponse()
@@ -137,16 +184,30 @@ public sealed class ProductEndpointsTests
 
         // Act
         using var response = await client.GetAsync("/bff/products/1");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var actualResult = new
+        {
+            StatusCode = response.StatusCode,
+            ContentType = response.Content.Headers.ContentType?.MediaType,
+            Status = body.RootElement.GetProperty("status").GetInt32(),
+            Title = body.RootElement.GetProperty("title").GetString()
+        };
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadGateway);
-        (response.Content.Headers.ContentType?.MediaType).Should().Be("application/problem+json");
+        actualResult.Should().BeEquivalentTo(expectedResult);
     }
 
     [TestMethod]
     public async Task GetProduct_WhenCatalogIsNotFoundButInventoryFails_Returns502InsteadOf404()
     {
         // Arrange
+        var expectedResult = new
+        {
+            StatusCode = HttpStatusCode.BadGateway,
+            ContentType = "application/problem+json",
+            Status = 502,
+            Title = "No se pudo obtener la información del producto."
+        };
         var backend = BackendHttpMock.Create((request, _) => Task.FromResult(new HttpResponseMessage(
             request.RequestUri!.AbsolutePath.StartsWith("/catalog/", StringComparison.Ordinal)
                 ? HttpStatusCode.NotFound
@@ -156,9 +217,17 @@ public sealed class ProductEndpointsTests
 
         // Act
         using var response = await client.GetAsync("/bff/products/999");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var actualResult = new
+        {
+            StatusCode = response.StatusCode,
+            ContentType = response.Content.Headers.ContentType?.MediaType,
+            Status = body.RootElement.GetProperty("status").GetInt32(),
+            Title = body.RootElement.GetProperty("title").GetString()
+        };
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+        actualResult.Should().BeEquivalentTo(expectedResult);
         BackendHttpMock.VerifyGet(backend, "/catalog/products/999");
         BackendHttpMock.VerifyGet(backend, "/inventory/products/999");
     }
@@ -167,6 +236,7 @@ public sealed class ProductEndpointsTests
     public async Task GetHealth_ReturnsOkWithoutCallingBackends()
     {
         // Arrange
+        var expectedResult = new { StatusCode = HttpStatusCode.OK, Status = "ok" };
         var backend = CreateBackend();
         using var factory = new BffWebApplicationFactory(backend);
         using var client = factory.CreateClient();
@@ -174,10 +244,14 @@ public sealed class ProductEndpointsTests
         // Act
         using var response = await client.GetAsync("/health");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var actualResult = new
+        {
+            StatusCode = response.StatusCode,
+            Status = body.RootElement.GetProperty("status").GetString()
+        };
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        body.RootElement.GetProperty("status").GetString().Should().Be("ok");
+        actualResult.Should().BeEquivalentTo(expectedResult);
         backend.Invocations.Should().BeEmpty();
     }
 
@@ -185,6 +259,8 @@ public sealed class ProductEndpointsTests
     public async Task GetHome_ReturnsHtmlWithoutCallingBackends()
     {
         // Arrange
+        var expectedResult = new { StatusCode = HttpStatusCode.OK, ContentType = "text/html" };
+        const string expectedContentFragment = "/bff/products/";
         var backend = CreateBackend();
         using var factory = new BffWebApplicationFactory(backend);
         using var client = factory.CreateClient();
@@ -192,11 +268,15 @@ public sealed class ProductEndpointsTests
         // Act
         using var response = await client.GetAsync("/");
         var html = await response.Content.ReadAsStringAsync();
+        var actualResult = new
+        {
+            StatusCode = response.StatusCode,
+            ContentType = response.Content.Headers.ContentType?.MediaType
+        };
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        (response.Content.Headers.ContentType?.MediaType).Should().Be("text/html");
-        html.Should().Contain("/bff/products/");
+        actualResult.Should().BeEquivalentTo(expectedResult);
+        html.Should().Contain(expectedContentFragment);
         backend.Invocations.Should().BeEmpty();
     }
 

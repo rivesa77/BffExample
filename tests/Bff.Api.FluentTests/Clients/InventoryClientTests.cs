@@ -16,6 +16,7 @@ public sealed class InventoryClientTests
     public async Task GetStockAsync_WithValidResponse_DeserializesAndUsesInventoryRoute()
     {
         // Arrange
+        var expectedResult = new InventoryStock(4, 7);
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(BackendHttpMock.Json(
             HttpStatusCode.OK, """{"productId":4,"availableUnits":7}""")));
         using var httpClient = BackendHttpMock.CreateClient(handler);
@@ -25,7 +26,7 @@ public sealed class InventoryClientTests
         var stock = await client.GetStockAsync(4, CancellationToken.None);
 
         // Assert
-        stock.Should().BeEquivalentTo(new InventoryStock(4, 7));
+        stock.Should().BeEquivalentTo(expectedResult);
         BackendHttpMock.VerifyGet(handler, "/inventory/products/4");
     }
 
@@ -33,6 +34,7 @@ public sealed class InventoryClientTests
     public async Task GetStockAsync_WithNotFound_ReturnsNull()
     {
         // Arrange
+        InventoryStock? expectedResult = null;
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
         using var httpClient = BackendHttpMock.CreateClient(handler);
         var client = new InventoryClient(httpClient);
@@ -41,7 +43,7 @@ public sealed class InventoryClientTests
         var stock = await client.GetStockAsync(999, CancellationToken.None);
 
         // Assert
-        stock.Should().BeNull();
+        stock.Should().BeEquivalentTo(expectedResult);
     }
 
     [TestMethod]
@@ -50,6 +52,7 @@ public sealed class InventoryClientTests
     public async Task GetStockAsync_WithBackendError_ThrowsHttpRequestException(HttpStatusCode status)
     {
         // Arrange
+        var expectedStatusCode = status;
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(new HttpResponseMessage(status)));
         using var httpClient = BackendHttpMock.CreateClient(handler);
         var client = new InventoryClient(httpClient);
@@ -59,7 +62,7 @@ public sealed class InventoryClientTests
 
         // Assert
         var assertion = await action.Should().ThrowExactlyAsync<HttpRequestException>();
-        assertion.Which.StatusCode.Should().Be(status);
+        assertion.Which.StatusCode.Should().Be(expectedStatusCode);
     }
 
     [TestMethod]

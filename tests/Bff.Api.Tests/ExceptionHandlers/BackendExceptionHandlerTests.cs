@@ -14,6 +14,7 @@ public sealed class BackendExceptionHandlerTests
     public async Task TryHandleAsync_WhenRequestIsAborted_DoesNotWriteProblemDetails()
     {
         // Arrange
+        const bool expectedResult = false;
         using var cancellation = new CancellationTokenSource();
         await cancellation.CancelAsync();
         var context = new DefaultHttpContext { RequestAborted = cancellation.Token };
@@ -26,7 +27,7 @@ public sealed class BackendExceptionHandlerTests
         var handled = await handler.TryHandleAsync(context, exception, cancellation.Token);
 
         // Assert
-        Assert.IsFalse(handled);
+        Assert.AreEqual(expectedResult, handled);
         problemDetails.VerifyNoOtherCalls();
     }
 }

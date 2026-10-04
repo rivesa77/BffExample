@@ -3,6 +3,7 @@ namespace Bff.Api.Tests.Clients;
 using System.Net;
 using System.Text.Json;
 using Bff.Api.Clients;
+using Bff.Api.Models;
 using Bff.Api.Tests.Mocks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -14,6 +15,7 @@ public sealed class InventoryClientTests
     public async Task GetStockAsync_WithValidResponse_DeserializesAndUsesInventoryRoute()
     {
         // Arrange
+        var expectedResult = new InventoryStock(4, 7);
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(BackendHttpMock.Json(
             HttpStatusCode.OK, """{"productId":4,"availableUnits":7}""")));
         using var httpClient = BackendHttpMock.CreateClient(handler);
@@ -23,9 +25,7 @@ public sealed class InventoryClientTests
         var stock = await client.GetStockAsync(4, CancellationToken.None);
 
         // Assert
-        Assert.IsNotNull(stock);
-        Assert.AreEqual(4, stock.ProductId);
-        Assert.AreEqual(7, stock.AvailableUnits);
+        Assert.AreEqual(expectedResult, stock);
         BackendHttpMock.VerifyGet(handler, "/inventory/products/4");
     }
 
@@ -33,6 +33,7 @@ public sealed class InventoryClientTests
     public async Task GetStockAsync_WithNotFound_ReturnsNull()
     {
         // Arrange
+        InventoryStock? expectedResult = null;
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
         using var httpClient = BackendHttpMock.CreateClient(handler);
         var client = new InventoryClient(httpClient);
@@ -41,7 +42,7 @@ public sealed class InventoryClientTests
         var stock = await client.GetStockAsync(999, CancellationToken.None);
 
         // Assert
-        Assert.IsNull(stock);
+        Assert.AreEqual(expectedResult, stock);
     }
 
     [TestMethod]
@@ -50,6 +51,7 @@ public sealed class InventoryClientTests
     public async Task GetStockAsync_WithBackendError_ThrowsHttpRequestException(HttpStatusCode status)
     {
         // Arrange
+        var expectedStatusCode = status;
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(new HttpResponseMessage(status)));
         using var httpClient = BackendHttpMock.CreateClient(handler);
         var client = new InventoryClient(httpClient);
@@ -59,7 +61,7 @@ public sealed class InventoryClientTests
 
         // Assert
         var exception = await Assert.ThrowsExactlyAsync<HttpRequestException>(action);
-        Assert.AreEqual(status, exception.StatusCode);
+        Assert.AreEqual(expectedStatusCode, exception.StatusCode);
     }
 
     [TestMethod]

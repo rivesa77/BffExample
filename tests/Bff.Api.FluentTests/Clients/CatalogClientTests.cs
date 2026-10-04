@@ -16,6 +16,7 @@ public sealed class CatalogClientTests
     public async Task GetProductAsync_WithValidResponse_DeserializesAndUsesCatalogRoute()
     {
         // Arrange
+        var expectedResult = new CatalogProduct(4, "Teclado", "Compacto", 49.90m, "EUR");
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(BackendHttpMock.Json(
             HttpStatusCode.OK,
             """{"id":4,"name":"Teclado","description":"Compacto","price":49.90,"currency":"EUR","supplierCost":25}""")));
@@ -26,7 +27,7 @@ public sealed class CatalogClientTests
         var product = await client.GetProductAsync(4, CancellationToken.None);
 
         // Assert
-        product.Should().BeEquivalentTo(new CatalogProduct(4, "Teclado", "Compacto", 49.90m, "EUR"));
+        product.Should().BeEquivalentTo(expectedResult);
         BackendHttpMock.VerifyGet(handler, "/catalog/products/4");
     }
 
@@ -34,6 +35,7 @@ public sealed class CatalogClientTests
     public async Task GetProductAsync_WithNotFound_ReturnsNull()
     {
         // Arrange
+        CatalogProduct? expectedResult = null;
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
         using var httpClient = BackendHttpMock.CreateClient(handler);
         var client = new CatalogClient(httpClient);
@@ -42,7 +44,7 @@ public sealed class CatalogClientTests
         var product = await client.GetProductAsync(999, CancellationToken.None);
 
         // Assert
-        product.Should().BeNull();
+        product.Should().BeEquivalentTo(expectedResult);
     }
 
     [TestMethod]
@@ -51,6 +53,7 @@ public sealed class CatalogClientTests
     public async Task GetProductAsync_WithBackendError_ThrowsHttpRequestException(HttpStatusCode status)
     {
         // Arrange
+        var expectedStatusCode = status;
         var handler = BackendHttpMock.Create((_, _) => Task.FromResult(new HttpResponseMessage(status)));
         using var httpClient = BackendHttpMock.CreateClient(handler);
         var client = new CatalogClient(httpClient);
@@ -60,7 +63,7 @@ public sealed class CatalogClientTests
 
         // Assert
         var assertion = await action.Should().ThrowExactlyAsync<HttpRequestException>();
-        assertion.Which.StatusCode.Should().Be(status);
+        assertion.Which.StatusCode.Should().Be(expectedStatusCode);
     }
 
     [TestMethod]

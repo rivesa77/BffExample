@@ -19,6 +19,9 @@ public sealed class ProductPageServiceTests
     {
         // Arrange
         var product = new CatalogProduct(1, "Portátil", "Equipo para trabajar.", 899.90m, "EUR");
+        var expectedResult = new ProductPageDto(
+            1, "Portátil", "Equipo para trabajar.", 899.90m,
+            "899,90 EUR", availability, canBuy);
         var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
         var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
         catalog.Setup(client => client.GetProductAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(product);
@@ -30,14 +33,7 @@ public sealed class ProductPageServiceTests
         var result = await service.GetAsync(1, CancellationToken.None);
 
         // Assert
-        Assert.IsNotNull(result);
-        Assert.AreEqual(product.Id, result.Id);
-        Assert.AreEqual(product.Name, result.Name);
-        Assert.AreEqual(product.Description, result.Description);
-        Assert.AreEqual(product.Price, result.Price);
-        Assert.AreEqual("899,90 EUR", result.DisplayPrice);
-        Assert.AreEqual(availability, result.Availability);
-        Assert.AreEqual(canBuy, result.CanBuy);
+        Assert.AreEqual(expectedResult, result);
         catalog.VerifyAll();
         inventory.VerifyAll();
     }
@@ -46,6 +42,7 @@ public sealed class ProductPageServiceTests
     public async Task GetAsync_WhenProductDoesNotExist_ReturnsNull()
     {
         // Arrange
+        ProductPageDto? expectedResult = null;
         var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
         var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
         catalog.Setup(client => client.GetProductAsync(999, It.IsAny<CancellationToken>()))
@@ -58,7 +55,7 @@ public sealed class ProductPageServiceTests
         var result = await service.GetAsync(999, CancellationToken.None);
 
         // Assert
-        Assert.IsNull(result);
+        Assert.AreEqual(expectedResult, result);
     }
 
     [TestMethod]
@@ -86,17 +83,17 @@ public sealed class ProductPageServiceTests
     public async Task GetAsync_WhenEitherBackendFails_PropagatesTheFailure(bool catalogFails)
     {
         // Arrange
-        var failure = new HttpRequestException("Fallo simulado.");
+        var expectedException = new HttpRequestException("Fallo simulado.");
         var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
         var inventory = new Mock<IInventoryClient>(MockBehavior.Strict);
         catalog.Setup(client => client.GetProductAsync(1, It.IsAny<CancellationToken>()))
             .Returns(catalogFails
-                ? Task.FromException<CatalogProduct?>(failure)
+                ? Task.FromException<CatalogProduct?>(expectedException)
                 : Task.FromResult<CatalogProduct?>(new(1, "Producto", "Descripción", 10m, "EUR")));
         inventory.Setup(client => client.GetStockAsync(1, It.IsAny<CancellationToken>()))
             .Returns(catalogFails
                 ? Task.FromResult<InventoryStock?>(new(1, 3))
-                : Task.FromException<InventoryStock?>(failure));
+                : Task.FromException<InventoryStock?>(expectedException));
         var service = new ProductPageService(catalog.Object, inventory.Object);
 
         // Act
@@ -104,13 +101,14 @@ public sealed class ProductPageServiceTests
 
         // Assert
         var exception = await Assert.ThrowsExactlyAsync<HttpRequestException>(action);
-        Assert.AreSame(failure, exception);
+        Assert.AreSame(expectedException, exception);
     }
 
     [TestMethod]
     public async Task GetAsync_StartsBothRequestsBeforeEitherCompletes()
     {
         // Arrange
+        var expectedResult = new ProductPageDto(1, "Producto", "Descripción", 10m, "10,00 EUR", "Disponible", true);
         var productCompletion = new TaskCompletionSource<CatalogProduct?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var stockCompletion = new TaskCompletionSource<InventoryStock?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var catalog = new Mock<ICatalogClient>(MockBehavior.Strict);
@@ -130,7 +128,7 @@ public sealed class ProductPageServiceTests
         // Assert
         Assert.IsTrue(startedBothRequests, "Ambos backends deben consultarse antes de esperar sus respuestas.");
         Assert.IsTrue(wasWaitingForResponses);
-        Assert.IsNotNull(result);
+        Assert.AreEqual(expectedResult, result);
     }
 
     [TestMethod]
